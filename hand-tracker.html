@@ -1,0 +1,579 @@
+https://github.com/syedsoni/Neural_Hand_Tracker.git<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neural Hand Tracker</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+  #app { position: relative; width: 100vw; height: 100vh; background: #000; overflow: hidden; }
+  #vid { visibility: hidden; position: absolute; width: 1px; height: 1px; }
+  #cvs { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .hud { position: absolute; pointer-events: none; line-height: 1.9; }
+  #hud-l { top: 18px; left: 20px; }
+  #hud-r { top: 18px; right: 20px; text-align: right; }
+  .hud-title { color: #00ffff; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; text-shadow: 0 0 12px #00ffff99; }
+  .hud-sub   { color: rgba(255,255,255,.28); font-size: 9px; letter-spacing: 1px; }
+  .hud-r-title { color: #ff00ff; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; text-shadow: 0 0 12px #ff00ff99; }
+
+  #corner-tl, #corner-tr, #corner-bl, #corner-br {
+    position: absolute; width: 18px; height: 18px; pointer-events: none;
+    border-color: rgba(0,255,255,.25); border-style: solid;
+  }
+  #corner-tl { top: 12px; left: 12px; border-width: 1px 0 0 1px; }
+  #corner-tr { top: 12px; right: 12px; border-width: 1px 1px 0 0; }
+  #corner-bl { bottom: 12px; left: 12px; border-width: 0 0 1px 1px; }
+  #corner-br { bottom: 12px; right: 12px; border-width: 0 1px 1px 0; }
+
+  #idle-msg {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: none; z-index: 2;
+    transition: opacity .6s;
+  }
+  #idle-title  { font-size: 28px; letter-spacing: 10px; color: #00ffff; text-transform: uppercase; text-shadow: 0 0 30px #00ffff88; margin-bottom: 10px; }
+  #idle-sub    { font-size: 9px; letter-spacing: 5px; color: rgba(0,255,255,.3); text-transform: uppercase; }
+  #idle-divider{ width: 60px; height: 1px; background: rgba(0,255,255,.2); margin: 20px auto; }
+  #idle-hint   { font-size: 8px; letter-spacing: 3px; color: rgba(255,255,255,.15); text-transform: uppercase; }
+
+  #loader {
+    position: absolute; inset: 0; background: #000; display: none;
+    flex-direction: column; align-items: center; justify-content: center; z-index: 30;
+  }
+  #loader-label { color: #00ffff; font-size: 10px; letter-spacing: 4px; margin-bottom: 18px; }
+  #loader-track { width: 180px; height: 1px; background: rgba(255,255,255,.1); }
+  #loader-fill  { height: 100%; background: #00ffff; width: 0%; transition: width .4s; box-shadow: 0 0 8px #00ffff; }
+
+  #err-msg {
+    position: absolute; inset: 0; display: none; align-items: center;
+    justify-content: center; z-index: 25; flex-direction: column; gap: 10px;
+  }
+  #err-msg span { color: #ff4444; font-size: 10px; letter-spacing: 3px; }
+  #err-detail   { color: rgba(255,68,68,.5); font-size: 9px; letter-spacing: 2px; }
+
+  #btn-wrap { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 10; }
+  #btn {
+    background: transparent; border: 1px solid rgba(0,255,255,.35);
+    color: #00ffff; font-family: 'Courier New', monospace;
+    font-size: 10px; letter-spacing: 4px; padding: 11px 34px;
+    cursor: pointer; transition: all .3s; outline: none;
+    text-transform: uppercase; text-shadow: 0 0 8px #00ffff66;
+  }
+  #btn:hover { background: rgba(0,255,255,.08); border-color: rgba(0,255,255,.7); box-shadow: 0 0 16px rgba(0,255,255,.2); }
+  #btn:active { transform: scale(.97); }
+
+  #scanline {
+    position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.04) 2px, rgba(0,0,0,.04) 4px);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="vid" playsinline muted></video>
+  <canvas id="cvs"></canvas>
+  <div id="scanline"></div>
+
+  <div id="corner-tl"></div>
+  <div id="corner-tr"></div>
+  <div id="corner-bl"></div>
+  <div id="corner-br"></div>
+
+  <div class="hud" id="hud-l">
+    <div class="hud-title">NEURAL HAND TRACKER</div>
+    <div class="hud-sub">FPS <span id="fps">—</span> &nbsp;·&nbsp; LANDMARKS 21 PER HAND</div>
+    <div class="hud-sub" id="speed-hud" style="margin-top:2px;">SPEED <span id="speed-val">—</span></div>
+  </div>
+
+  <div class="hud" id="hud-r">
+    <div class="hud-r-title">HANDS&nbsp;<span id="hcount">0</span></div>
+    <div class="hud-sub" id="gesture-hud">GESTURE&nbsp;<span id="gesture-val">—</span></div>
+    <div class="hud-sub" style="margin-top:2px;color:rgba(255,255,255,.15);">PINCH TO BURST</div>
+  </div>
+
+  <div id="idle-msg">
+    <div id="idle-title">HAND TRACKER</div>
+    <div id="idle-sub">AI · REAL-TIME · 21 LANDMARKS</div>
+    <div id="idle-divider"></div>
+    <div id="idle-hint">MOVE YOUR HANDS TO INTERACT</div>
+  </div>
+
+  <div id="loader">
+    <div id="loader-label">LOADING AI MODEL...</div>
+    <div id="loader-track"><div id="loader-fill"></div></div>
+  </div>
+
+  <div id="err-msg">
+    <span>CAMERA ACCESS DENIED</span>
+    <span id="err-detail"></span>
+  </div>
+
+  <div id="btn-wrap">
+    <button id="btn" onclick="toggleCam()">▶&nbsp; START CAMERA</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<script>
+/* ─── Canvas & State ─────────────────────────────────────────────────── */
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+const vid = document.getElementById('vid');
+
+let running = false, mpCamera = null, mpHands = null;
+let latestHands = [];         // [{landmarks, handedness}]
+let particles = [];
+let ripples = [];
+let prevLms  = {};            // keyed by label
+let smoothLms = {};           // smoothed landmarks
+let handSpeeds = {};
+
+const LERP = 0.45;            // landmark smoothing factor
+
+/* Color palettes per hand (by label) */
+const BASE_COLOR  = { Left: [0, 255, 255],   Right: [255, 0, 255] };
+const FAST_COLOR  = { Left: [255, 100, 0],   Right: [255, 200, 0] };
+const GLOW_COLOR  = { Left: '#00ffff',        Right: '#ff00ff' };
+
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[0,17],[17,18],[18,19],[19,20]
+];
+const TIPS = [4, 8, 12, 16, 20];
+
+/* ─── FPS ─────────────────────────────────────────────────────────────── */
+let frameCount = 0, lastSec = 0, fpsDisplay = 0;
+
+/* ─── Resize Canvas ───────────────────────────────────────────────────── */
+function resizeCvs() {
+  cvs.width  = window.innerWidth;
+  cvs.height = window.innerHeight;
+}
+resizeCvs();
+window.addEventListener('resize', resizeCvs);
+
+/* ─── Utility ─────────────────────────────────────────────────────────── */
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpColor(c1, c2, t) {
+  return [lerp(c1[0],c2[0],t)|0, lerp(c1[1],c2[1],t)|0, lerp(c1[2],c2[2],t)|0];
+}
+function toRgb([r,g,b], a=1) { return `rgba(${r},${g},${b},${a})`; }
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1),16);
+  return [(n>>16)&255,(n>>8)&255,n&255];
+}
+
+/* ─── Particle ────────────────────────────────────────────────────────── */
+class Particle {
+  constructor(x, y, rgb, burst=false) {
+    const spd = burst ? 2+Math.random()*5 : .5+Math.random()*2;
+    const ang = Math.random()*Math.PI*2;
+    this.x = x; this.y = y;
+    this.vx = Math.cos(ang)*spd; this.vy = Math.sin(ang)*spd;
+    this.rgb = rgb;
+    this.life = 1;
+    this.decay = burst ? .025+Math.random()*.025 : .015+Math.random()*.02;
+    this.size = burst ? 2+Math.random()*3 : 1+Math.random()*2;
+  }
+  update() {
+    this.x += this.vx; this.y += this.vy;
+    this.vx *= .97; this.vy *= .97;
+    this.life -= this.decay;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = this.life * .9;
+    ctx.fillStyle   = toRgb(this.rgb);
+    ctx.shadowColor = toRgb(this.rgb);
+    ctx.shadowBlur  = 8;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* ─── Ripple ──────────────────────────────────────────────────────────── */
+class Ripple {
+  constructor(x, y, rgb) {
+    this.x = x; this.y = y; this.rgb = rgb;
+    this.r = 0; this.life = 1;
+  }
+  update() { this.r += 4; this.life = Math.max(0, 1 - this.r/100); }
+  draw() {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha  = this.life * .7;
+    ctx.strokeStyle  = toRgb(this.rgb);
+    ctx.shadowColor  = toRgb(this.rgb);
+    ctx.shadowBlur   = 20;
+    ctx.lineWidth    = 1.5;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
+    ctx.stroke();
+    /* second ring */
+    ctx.globalAlpha  = this.life * .3;
+    ctx.lineWidth    = 1;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r*1.6, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/* ─── Idle Constellation ──────────────────────────────────────────────── */
+const IDLE_DOTS = Array.from({length:55}, () => ({
+  x: Math.random()*window.innerWidth,
+  y: Math.random()*window.innerHeight,
+  vx: (Math.random()-.5)*.35,
+  vy: (Math.random()-.5)*.35,
+  r:  .8+Math.random()*1.5
+}));
+let idleRunning = true;
+
+function animateIdle(ts) {
+  if (!idleRunning) return;
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(0,0,cvs.width,cvs.height);
+
+  const W = cvs.width, H = cvs.height;
+  IDLE_DOTS.forEach(d => {
+    d.x += d.vx; d.y += d.vy;
+    if (d.x<0||d.x>W) d.vx*=-1;
+    if (d.y<0||d.y>H) d.vy*=-1;
+  });
+
+  /* connections */
+  ctx.strokeStyle = 'rgba(0,255,255,0.12)';
+  ctx.lineWidth = .5;
+  for (let i=0;i<IDLE_DOTS.length;i++) {
+    for (let j=i+1;j<IDLE_DOTS.length;j++) {
+      const dx = IDLE_DOTS[i].x - IDLE_DOTS[j].x;
+      const dy = IDLE_DOTS[i].y - IDLE_DOTS[j].y;
+      const d  = Math.sqrt(dx*dx+dy*dy);
+      if (d<110) {
+        ctx.globalAlpha = (1-d/110)*.25;
+        ctx.beginPath();
+        ctx.moveTo(IDLE_DOTS[i].x, IDLE_DOTS[i].y);
+        ctx.lineTo(IDLE_DOTS[j].x, IDLE_DOTS[j].y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  /* dots */
+  ctx.globalAlpha = 1;
+  IDLE_DOTS.forEach(d => {
+    ctx.fillStyle  = 'rgba(0,255,255,.55)';
+    ctx.shadowColor= '#00ffff';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r, 0, Math.PI*2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+  requestAnimationFrame(animateIdle);
+}
+requestAnimationFrame(animateIdle);
+
+/* ─── Speed color ─────────────────────────────────────────────────────── */
+function speedColor(label, speed) {
+  const t = Math.min(speed / 60, 1);
+  return lerpColor(BASE_COLOR[label] || BASE_COLOR.Left, FAST_COLOR[label] || FAST_COLOR.Left, t);
+}
+
+/* ─── Calc speed ──────────────────────────────────────────────────────── */
+function calcSpeed(curr, prev, W, H) {
+  if (!prev || prev.length !== curr.length) return 0;
+  let sum = 0;
+  for (let i=0;i<curr.length;i++) {
+    const dx=(curr[i].x-prev[i].x)*W, dy=(curr[i].y-prev[i].y)*H;
+    sum += Math.sqrt(dx*dx+dy*dy);
+  }
+  return sum / curr.length * 60; // approx px/s at 60fps
+}
+
+/* ─── Draw hand ───────────────────────────────────────────────────────── */
+const pinchState = {};
+
+function drawHand(lms, label) {
+  const W = cvs.width, H = cvs.height;
+
+  /* smooth landmarks */
+  if (!smoothLms[label]) smoothLms[label] = lms.map(l=>({...l}));
+  const sm = smoothLms[label];
+  lms.forEach((l,i) => {
+    sm[i].x = lerp(sm[i].x, l.x, LERP);
+    sm[i].y = lerp(sm[i].y, l.y, LERP);
+  });
+
+  /* map to canvas (mirror x) */
+  const pts = sm.map(l => ({ x:(1-l.x)*W, y:l.y*H }));
+
+  /* speed */
+  const spd = handSpeeds[label] || 0;
+  const rgb  = speedColor(label, spd);
+  const col  = toRgb(rgb);
+  const colA = toRgb(rgb, .55);
+
+  /* ── constellation lines ── */
+  ctx.save();
+  ctx.lineWidth   = 1.2;
+  ctx.strokeStyle = colA;
+  ctx.shadowColor = col;
+  ctx.shadowBlur  = 10;
+  CONNECTIONS.forEach(([a,b]) => {
+    ctx.beginPath();
+    ctx.moveTo(pts[a].x, pts[a].y);
+    ctx.lineTo(pts[b].x, pts[b].y);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  /* ── landmark dots ── */
+  pts.forEach((pt, i) => {
+    const isTip = TIPS.includes(i);
+    const sz    = isTip ? 5.5 : 3.5;
+
+    /* outer glow ring */
+    ctx.save();
+    ctx.shadowColor = col;
+    ctx.shadowBlur  = 22;
+    ctx.fillStyle   = toRgb(rgb, .5);
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, sz*1.8, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    /* solid dot */
+    ctx.save();
+    ctx.shadowColor = col;
+    ctx.shadowBlur  = 14;
+    ctx.fillStyle   = col;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, sz, 0, Math.PI*2);
+    ctx.fill();
+    /* bright core */
+    ctx.shadowBlur  = 0;
+    ctx.fillStyle   = 'rgba(255,255,255,.9)';
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, sz*.38, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    /* particle trail from fingertips when moving */
+    if (isTip && spd > 8 && Math.random() < 0.45) {
+      particles.push(new Particle(pt.x, pt.y, rgb));
+    }
+  });
+
+  /* ── pinch detection (thumb tip #4 ↔ index tip #8) ── */
+  const th = pts[4], idx = pts[8];
+  const pdx = th.x-idx.x, pdy = th.y-idx.y;
+  const pd  = Math.sqrt(pdx*pdx+pdy*pdy);
+  const pinching = pd < 38;
+
+  if (pinching && !pinchState[label]) {
+    /* burst on pinch start */
+    const mx=(th.x+idx.x)/2, my=(th.y+idx.y)/2;
+    ripples.push(new Ripple(mx, my, rgb));
+    for (let i=0;i<30;i++) particles.push(new Particle(mx,my,rgb,true));
+    document.getElementById('gesture-val').textContent = 'PINCH';
+  }
+  if (!pinching && pinchState[label]) {
+    document.getElementById('gesture-val').textContent = '—';
+  }
+  pinchState[label] = pinching;
+
+  if (pinching) {
+    /* dashed connection line */
+    ctx.save();
+    ctx.setLineDash([4,4]);
+    ctx.lineWidth   = 1;
+    ctx.strokeStyle = toRgb(rgb, .7);
+    ctx.shadowColor = col;
+    ctx.shadowBlur  = 12;
+    ctx.beginPath();
+    ctx.moveTo(th.x,th.y); ctx.lineTo(idx.x,idx.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+
+/* ─── Main Render Loop ────────────────────────────────────────────────── */
+function renderLoop(ts) {
+  if (!running) return;
+  requestAnimationFrame(renderLoop);
+
+  /* FPS */
+  frameCount++;
+  if (ts - lastSec >= 1000) {
+    fpsDisplay = frameCount; frameCount = 0; lastSec = ts;
+    document.getElementById('fps').textContent = fpsDisplay;
+  }
+
+  /* trail fade */
+  ctx.fillStyle = 'rgba(0,0,0,0.14)';
+  ctx.fillRect(0,0,cvs.width,cvs.height);
+
+  /* particles */
+  particles = particles.filter(p=>p.life>0);
+  if (particles.length > 500) particles.splice(0, particles.length-500);
+  particles.forEach(p=>{ p.update(); p.draw(); });
+
+  /* ripples */
+  ripples = ripples.filter(r=>r.life>0);
+  ripples.forEach(r=>{ r.update(); r.draw(); });
+
+  /* update hand count & draw */
+  document.getElementById('hcount').textContent = latestHands.length;
+
+  let maxSpd = 0;
+  latestHands.forEach(({landmarks, label}) => {
+    drawHand(landmarks, label);
+    maxSpd = Math.max(maxSpd, handSpeeds[label]||0);
+  });
+  if (latestHands.length === 0) {
+    document.getElementById('gesture-val').textContent = '—';
+  }
+
+  /* speed display */
+  const spdBar = Math.min(maxSpd/80,1);
+  document.getElementById('speed-val').textContent =
+    maxSpd > 0 ? (maxSpd|0)+' px/s' : '—';
+}
+
+/* ─── MediaPipe Setup ─────────────────────────────────────────────────── */
+function initMediaPipe() {
+  if (typeof Hands === 'undefined') {
+    showError('MediaPipe failed to load. Check your network connection.');
+    return;
+  }
+
+  mpHands = new Hands({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+  });
+  mpHands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.55
+  });
+
+  mpHands.onResults(results => {
+    latestHands = [];
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length) {
+      results.multiHandLandmarks.forEach((lms, i) => {
+        const label = results.multiHandedness[i]?.label || 'Left';
+
+        /* calc speed vs previous */
+        const spd = calcSpeed(lms, prevLms[label], cvs.width, cvs.height);
+        /* smooth speed */
+        handSpeeds[label] = lerp(handSpeeds[label]||0, spd, .35);
+        prevLms[label] = lms.map(l=>({...l}));
+
+        latestHands.push({ landmarks: lms, label });
+      });
+    } else {
+      /* decay speeds */
+      Object.keys(handSpeeds).forEach(k => { handSpeeds[k] *= .85; });
+    }
+  });
+
+  mpCamera = new Camera(vid, {
+    onFrame: async () => {
+      if (mpHands && running) await mpHands.send({ image: vid });
+    },
+    width: 640, height: 480
+  });
+}
+
+/* ─── Toggle Camera ───────────────────────────────────────────────────── */
+let loadFake = null;
+
+async function toggleCam() {
+  if (running) {
+    stopCam(); return;
+  }
+
+  /* show loader with fake progress */
+  const loader = document.getElementById('loader');
+  const fill   = document.getElementById('loader-fill');
+  loader.style.display = 'flex';
+  document.getElementById('idle-msg').style.opacity = '0';
+
+  let progress = 0;
+  loadFake = setInterval(() => {
+    progress = Math.min(progress + (Math.random()*12+4), 92);
+    fill.style.width = progress + '%';
+  }, 200);
+
+  try {
+    if (!mpHands) initMediaPipe();
+    if (!mpHands) throw new Error('MediaPipe failed to initialize');
+
+    await mpCamera.start();
+
+    clearInterval(loadFake);
+    fill.style.width = '100%';
+    await new Promise(r => setTimeout(r, 300));
+
+    loader.style.display = 'none';
+    document.getElementById('idle-msg').style.display = 'none';
+    running = true;
+    document.getElementById('btn').textContent = '■  STOP CAMERA';
+    document.getElementById('btn').style.borderColor = 'rgba(255,0,255,.4)';
+    document.getElementById('btn').style.color = '#ff00ff';
+    document.getElementById('btn').style.textShadow = '0 0 8px #ff00ff66';
+    lastSec = performance.now(); frameCount = 0;
+    requestAnimationFrame(renderLoop);
+
+  } catch (e) {
+    clearInterval(loadFake);
+    loader.style.display = 'none';
+    document.getElementById('idle-msg').style.opacity = '1';
+    if (e.name === 'NotAllowedError' || e.message.includes('Permission')) {
+      showError('Camera permission denied.');
+    } else {
+      showError(e.message || 'Unknown error.');
+    }
+  }
+}
+
+function stopCam() {
+  running = false;
+  if (mpCamera) mpCamera.stop();
+  latestHands = []; particles = []; ripples = [];
+  prevLms = {}; smoothLms = {}; handSpeeds = {}; Object.keys(pinchState).forEach(k=>delete pinchState[k]);
+  document.getElementById('hcount').textContent = '0';
+  document.getElementById('gesture-val').textContent = '—';
+  document.getElementById('speed-val').textContent = '—';
+  document.getElementById('fps').textContent = '—';
+  document.getElementById('btn').textContent = '▶  START CAMERA';
+  document.getElementById('btn').style.borderColor = 'rgba(0,255,255,.35)';
+  document.getElementById('btn').style.color = '#00ffff';
+  document.getElementById('btn').style.textShadow = '0 0 8px #00ffff66';
+  /* restart idle */
+  const idleMsg = document.getElementById('idle-msg');
+  idleMsg.style.display = 'flex';
+  idleMsg.style.opacity = '1';
+  idleRunning = true;
+  requestAnimationFrame(animateIdle);
+}
+
+function showError(msg) {
+  const e = document.getElementById('err-msg');
+  document.getElementById('err-detail').textContent = msg;
+  e.style.display = 'flex';
+  setTimeout(() => { e.style.display = 'none'; }, 5000);
+}
+</script>
+</body>
+</html>
